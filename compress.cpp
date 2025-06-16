@@ -2,11 +2,58 @@
 #include <sstream>
 #include <queue>
 #include <unordered_map>
+#include <fstream>
 
 using namespace std;
 
+class BitWriter {
+    std::ofstream out;
+    uint8_t buffer = 0;
+    int bit_count = 0;
+    size_t total_bits = 0;
 
-struct hfTreeNode {
+public:
+    BitWriter(const std::string& filename) {
+        out.open(filename, std::ios::binary);
+    }
+
+    ~BitWriter() {
+        flush(); // flush any remaining bits
+        out.close();
+    }
+
+    void write_bit(bool bit) {
+        buffer = (buffer << 1) | bit;
+        bit_count++;
+        total_bits++;
+
+        if (bit_count == 8) {
+            out.put(buffer);
+            bit_count = 0;
+            buffer = 0;
+        }
+    }
+
+    void write_code(const std::string& code) {
+        for (char c : code) {
+            write_bit(c == '1');
+        }
+    }
+
+    void flush() {
+        if (bit_count > 0) {
+            buffer <<= (8 - bit_count); // pad with 0s
+            out.put(buffer);
+        }
+    }
+
+    size_t get_total_bits() const {
+        return total_bits;
+    }
+};
+
+class hfTreeNode {
+public:
     char ch;
     uint64_t freq;
     hfTreeNode* left;
@@ -16,12 +63,22 @@ struct hfTreeNode {
         : ch(c), freq(f), left(l), right(r) {}
     hfTreeNode(char c, uint64_t f)
         : ch(c), freq(f), left(nullptr), right(nullptr) {}
+
+    bool isLeafNode(){
+        return left == nullptr && right == nullptr;
+    }
+    
+    ~hfTreeNode() {
+        delete left;
+        delete right;
+    }
 };
 
 struct Compare{
     bool operator()(hfTreeNode* a, hfTreeNode* b){
         return a->freq > b->freq;
     }
+
 };
 
 hfTreeNode* build_huffman_tree(unordered_map<char, uint64_t> &freq_map){
@@ -42,7 +99,7 @@ hfTreeNode* build_huffman_tree(unordered_map<char, uint64_t> &freq_map){
 
 void build_code_map(hfTreeNode* node, string& path, unordered_map<char, string>& code_map){
     if(!node) return;
-    if(node->left == nullptr and node->right == nullptr){
+    if(node->isLeafNode()){
         code_map[node->ch] = path;
         return;
     }
@@ -56,36 +113,67 @@ void build_code_map(hfTreeNode* node, string& path, unordered_map<char, string>&
     path.pop_back();
 }
 
-string encode(const string& input, const unordered_map<char, string>& code_map){
-    ostringstream oss;
-    for (char ch : input)
-        oss << code_map.at(ch);
-    return oss.str();
+void encode(const string& input_filename, const string&output_filename, unordered_map<char, string>& code_map){
+    // ostringstream oss;
+    // for (char ch : input)
+    //     oss << code_map.at(ch);
+    // return oss.str();
+
+    ifstream input_file_again(input_filename); // Reopen for second pass
+        BitWriter writer(output_filename);
+        char ch;
+        while (input_file_again.get(ch)) {
+            writer.write_code(code_map[ch]); // stream encode one char at a time
+        }
+        cout << "Compression successful. Output saved to: " << output_filename << "\n";
+    return;
 }
 
-int main() {
-    string input_str = "It was the best of times, it was the worst of times.";
+void build_freq_map(string input_filename, unordered_map<char, uint64_t>& freq_map){
+    ifstream input_file(input_filename);
+    if (!input_file.is_open()) {
+        cerr << "Failed to open input file.\n";
+        return;
+    }
+
+    char ch;
+    while (input_file.get(ch)) {
+        freq_map[ch]++;
+    }
+    input_file.close();
+    return;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 2) {
+        cerr << "Usage: " << argv[0] << " <input_file.txt>\n";
+        return 1;
+    }
+
+    string input_filename = argv[1];
     
     // Step 1: Frequency count
     unordered_map<char, uint64_t> freq_map;
-    for (char ch : input_str) freq_map[ch]++;
+    build_freq_map(input_filename, freq_map);
+    if(freq_map.size() == 0) return 1; // return fail if file is not opened or it is empty.
 
     // Step 2: Build Huffman tree
     hfTreeNode* root = build_huffman_tree(freq_map);
 
+    // Step 3: Build a char to bitstream dictionary
     string path;
     unordered_map<char, string> code_map;
     build_code_map(root,path,code_map);
 
-    // Step 4: Encode input string
-    string encoded = encode(input_str, code_map);
+    string output_filename = input_filename + ".bin";
 
-    cout << "Original size:   " << input_str.length() * 8 << " bits\n";
-    cout << "Compressed size: " << encoded.length() << " bits\n";
-    cout << "\nEncoded string:\n" << encoded << "\n";
+    try{
+        encode(input_filename, output_filename, code_map);
+    } catch (const exception& e) {
+        cerr << "Error: " << e.what() << "\n";
+        return 1;
+    }
 
-    cout << "\nHuffman Codes:\n";
-    for (const auto& x : code_map)
-        cout << "'" << x.first << "': " << x.second << "\n";
-
+    delete root;
+    return 0;
 }
