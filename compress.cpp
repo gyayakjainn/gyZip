@@ -7,81 +7,120 @@
 
 using namespace std;
 
+#ifdef SHOW_TREE
+    ostringstream tree_ss;
+#endif
+
 class BitWriter {
     std::ofstream out;
     uint8_t buffer = 0;
     int bit_count = 0;
     size_t total_bits = 0;
-
+#ifdef ENABLE_LOGS
+    ostringstream logs_ss;
+#endif
+#ifdef SHOW_BYTES
+    ostringstream bytes_ss;
+#endif
 public:
     BitWriter(const std::string& filename) {
         out.open(filename, std::ios::binary | std::ios::trunc);
     }
 
     ~BitWriter() {
-        flush(); // flush any remaining bits
+#ifdef ENABLE_LOGS
+        cout << logs_ss.str() << endl;
+#endif
+#ifdef SHOW_BYTES
+        cout << bytes_ss.str() << endl;
+#endif
+        if(bit_count > 0) {
+            cerr << "Some bits left in buffer, flushing at the end." << endl;
+            cerr << "With padding size: " << 8 - bit_count << endl;
+            flush(); // flush any remaining bits
+        }
         out.close();
     }
 
-    void write_byte(uint8_t byte){
+    void write_byte(uint8_t byte)
+    {
         bitset<8> bits(byte);
-#ifdef ENABLE_LOGS
-        cout << "bitset is : " << bits << endl << "Written bits are : "; 
+#ifdef SHOW_BYTES
+        bytes_ss << "bitset is : " << bits << endl << "Written bits are : "; 
 #endif
         for (int i = 0; i<8; i++) {
             write_bit(bits[7-i]);
-#ifdef ENABLE_LOGS
-            cout << bits[7-i]; //debug logs
+#ifdef SHOW_BYTES
+            bytes_ss << bits[7-i]; //debug logs
 #endif
         }
-#ifdef ENABLE_LOGS
-        cout << endl; // debug logs
+#ifdef SHOW_BYTES
+        bytes_ss << endl; // debug logs
 #endif
     }
-    void write_bit(bool bit) {
+
+    void write_bit(bool bit) 
+    {
         buffer = (buffer << 1) | bit;
         bit_count++;
         total_bits++;
-#ifdef ENABLE_LOGS
-        cout << bit; // debug logs
-#endif
         if (bit_count == 8) {
             out.put(buffer);
+#ifdef ENABLE_LOGS
+            bitset<8> bits(buffer);
+            logs_ss << bits << ": " << buffer << endl; // debug logs
+#endif
             bit_count = 0;
             buffer = 0;
-#ifdef ENABLE_LOGS
-            cout << endl; // debug logs
-#endif
         }
     }
 
-    void write_code(const std::string& code) {
+    void write_code(const std::string& code) 
+    {
         for (char c : code) {
             write_bit(c == '1');
             total_bits += 8;
         }
     }
 
-    void write_raw_uint16(uint16_t value) {
-        for (int i = 0; i < 2; ++i)
-        {
-            out.put((value >> (i * 8)) & 0xFF);
+    template <typename T>
+    void write_raw_uint(T value) 
+    {
+        static_assert(std::is_integral<T>::value, "Only integral types supported");
+
+        for (size_t i = 0; i < sizeof(T); ++i) {
+            out.put((value >> (i * 8)) & 0xFF);  // Little-endian write
+#ifdef ENABLE_LOGS
+            bitset <8> bits((value >> (i * 8)) & 0xFF);
+            logs_ss << bits << ": " << ((value >> (i * 8)) & 0xFF) << endl;
+#endif
             total_bits += 8;
         }
     }
 
-    void patch_uint16_at_position(std::streampos pos, uint16_t value) {
-        std::streampos current = out.tellp();
+    template <typename M>
+    void patch_uint_at_position(std::streampos pos, M value) 
+    {
+        static_assert(std::is_integral<M>::value, "Only integral types supported");
+
+        std::streampos current_position = out.tellp();
         out.seekp(pos);
-        write_raw_uint16(value);
-        out.seekp(current);
+        total_bits -= sizeof(M)*8;
+        write_raw_uint(value);
+        out.seekp(current_position);
     }
 
 
-    void flush() {
+    void flush() 
+    {
         if (bit_count > 0) {
             buffer <<= (8 - bit_count); // pad with 0s
+            patch_uint_at_position(std::ios::beg + 2, uint8_t(8 - bit_count));      
             out.put(buffer);
+#ifdef ENABLE_LOGS
+            bitset<8> bits(buffer);
+            logs_ss << bits << ": " << buffer << endl;
+#endif
             buffer = 0;
             bit_count = 0;
         }
@@ -122,7 +161,8 @@ struct Compare {
 
 };
 
-hfTreeNode* build_huffman_tree(unordered_map<char, uint64_t> &freq_map) {
+hfTreeNode* build_huffman_tree(unordered_map<char, uint64_t> &freq_map) 
+{
     priority_queue<hfTreeNode*, vector<hfTreeNode*>,Compare> pq;
     
     for (const auto& x : freq_map)
@@ -138,7 +178,8 @@ hfTreeNode* build_huffman_tree(unordered_map<char, uint64_t> &freq_map) {
     return pq.top();
 }
 
-void build_code_map(hfTreeNode* node, string& path, unordered_map<char, string>& code_map) {
+void build_code_map(hfTreeNode* node, string& path, unordered_map<char, string>& code_map)
+{
     if(!node) return;
     if(node->isLeafNode()) {
         code_map[node->ch] = path;
@@ -154,8 +195,8 @@ void build_code_map(hfTreeNode* node, string& path, unordered_map<char, string>&
     path.pop_back();
 }
 
-void encode(const string& input_filename, BitWriter& writer, unordered_map<char, string>& code_map) {
-    // ostringstream oss;
+void encode(const string& input_filename, BitWriter& writer, unordered_map<char, string>& code_map)
+{
     // for (char ch : input)
     //     oss << code_map.at(ch);
     // return oss.str();
@@ -170,7 +211,8 @@ void encode(const string& input_filename, BitWriter& writer, unordered_map<char,
     return;
 }
 
-void build_freq_map(string input_filename, unordered_map<char, uint64_t>& freq_map) {
+void build_freq_map(string input_filename, unordered_map<char, uint64_t>& freq_map)
+{
     ifstream input_file(input_filename);
     if (!input_file.is_open()) {
         cerr << "Failed to open input file." << endl;
@@ -185,16 +227,17 @@ void build_freq_map(string input_filename, unordered_map<char, uint64_t>& freq_m
     return;
 }
 
-void serialize_tree(hfTreeNode* node, BitWriter &writer, uint16_t &tree_size) {
+void serialize_tree(hfTreeNode* node, BitWriter &writer, uint16_t &tree_size) 
+{
     if(node->isLeafNode()) {
         writer.write_bit(1);
         tree_size++;
 #ifdef SHOW_TREE
-        cout << "1"; // debug logs
+        tree_ss << "1"; // debug logs
 #endif
         writer.write_byte(static_cast<uint8_t>(node->ch));
 #ifdef SHOW_TREE
-        cout << "\'" << node->ch << "\' "; // debug logs
+        tree_ss << "\'" << node->ch << "\' "; // debug logs
 #endif
         tree_size += 8;
         return;
@@ -203,7 +246,7 @@ void serialize_tree(hfTreeNode* node, BitWriter &writer, uint16_t &tree_size) {
         writer.write_bit(0);
         tree_size++;
 #ifdef SHOW_TREE
-        cout << "0"; // debug logs
+        tree_ss << "0"; // debug logs
 #endif
     }
     serialize_tree(node->left, writer, tree_size);
@@ -211,13 +254,13 @@ void serialize_tree(hfTreeNode* node, BitWriter &writer, uint16_t &tree_size) {
         
 }
 
-int main(int argc, char* argv[]) {
-    if (argc != 2) {
+int main(int argc, char* argv[])
+{
+    if (argc < 2) {
         cerr << "Usage: " << argv[0] << " <input_file.txt>" << endl;
         return 1;
     }
-
-    string input_filename = argv[1];
+    string input_filename = argv[argc-1];
     
     // Step 1: Frequency count
     unordered_map<char, uint64_t> freq_map;
@@ -236,17 +279,18 @@ int main(int argc, char* argv[]) {
 
     string output_filename = input_filename + ".bin";
     uint16_t header_size = 0; //placeholder for now
+    uint8_t padding_size = 0; //placeholder for now
     try{
         BitWriter writer(output_filename);
-        writer.write_raw_uint16(header_size);
-#ifdef ENABLE_LOGS
-        bitset<8> bits(0); // debug logs
-        cout << bits << endl; // debug logs
-        cout << bits << endl; // debug logs
-#endif
+        writer.write_raw_uint(header_size);
+        writer.write_raw_uint(padding_size);
         serialize_tree(root, writer, header_size);
         encode(input_filename, writer, code_map);
-        writer.patch_uint16_at_position(std::ios::beg,header_size);
+        writer.flush();
+        writer.patch_uint_at_position(std::ios::beg,header_size);
+#ifdef SHOW_TREE
+        cout << tree_ss.str() << endl;
+#endif
         cout << "Compression successful. Output saved to: " << output_filename << endl;
         cout << "And your header size is: " << header_size << endl;
     } catch (const exception& e) {
