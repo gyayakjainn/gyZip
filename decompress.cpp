@@ -9,7 +9,7 @@
 
 using namespace std;
 
-class BitReader {
+class BitReader { 
     public:
     BitReader(std::istream& in) : in(in), buffer(0), bitsRemaining(0) {}
 
@@ -56,13 +56,28 @@ class BitReader {
         in.seekg(current_position + n);
     }
 
+    std::streampos get_current_position()
+    {
+        return in.tellg();
+    }
+
+    bool seek_to_position(std::streampos n)
+    {
+        in.seekg(n);
+        return (in.tellg() == std::ios::beg + n);
+    }
+
     void seek_back_to_beginning()
     {
         in.clear();
         in.seekg(std::ios::beg);
         cout << "Position after seek: " << in.tellg() << endl;
     }
-
+    
+    bool if_reached_eof(int padding_size)
+    {
+        return (in.peek() == EOF && (bitsRemaining + 1 == padding_size));
+    }
 private:
     std::istream& in;
     uint8_t buffer;
@@ -208,6 +223,66 @@ hfTreeNode* deserialize_huffman_tree(BitReader& reader)
     return root;
 }
 
+int get_padding_size(BitReader& reader)
+{
+    std::streampos current_position = reader.get_current_position();
+    if (reader.seek_to_position(std::ios::beg + 2) == false)
+    {
+        throw std::runtime_error("Couldn't seek to required byte position");
+    }
+
+    uint8_t padding_size = 0;
+    if (reader.readByte(padding_size) == false) {
+        throw std::runtime_error("Unexpected end of file while reading uint8_t.");
+    }
+    padding_size |= static_cast<uint8_t>((padding_size) << 8);
+    
+    if(reader.seek_to_position(current_position) == false) {
+        throw std::runtime_error("Couldn't seek back to current position");
+    }
+
+    cout << "Last byte padded with " << static_cast<int>(padding_size) << " 0 bits." << endl;
+    return static_cast<int>(padding_size);
+}
+
+bool decode_and_write(hfTreeNode* root, BitReader& reader, int padding_size, string output_filename)
+{
+    bool bit = 0;
+    hfTreeNode* node = root;
+    std::ofstream out;
+
+    out.open(output_filename);
+    if (!out) {
+        std::cerr << "Failed to open output file.\n";
+        return 1;
+    }
+
+    while (reader.readBit(bit)) {
+        if (node->isLeafNode()) {
+            out.put(static_cast<unsigned char>(node->u.ch));
+            node = root;
+        }
+        
+        if (bit) node = node->right;
+        else node = node->left;
+
+        if (node == nullptr) {
+            cerr << "Bits misaligned while decoding. stopped decoding." << endl;
+            cerr << "Your decompressed file is: " << output_filename << endl;
+            return 1;
+        }
+
+        if (reader.if_reached_eof(padding_size)) {
+            cout << "End of valid data reached. \nPadding Size: " << padding_size << endl;
+            break;
+        }
+    }
+    cout << "Decompression successful." << endl;
+    cout << "Your decompressed file is: " << output_filename << endl;
+
+    return 0;
+}
+
 int main(int argc, char* argv[])
 {
     if (argc < 2) {
@@ -215,13 +290,18 @@ int main(int argc, char* argv[])
         return 1;
     }
     string input_filename = argv[argc - 1];
+    string output_filename = input_filename.substr(0, input_filename.size() - 8);
+    output_filename += "_decompressed.txt";
+    
     std::ifstream infile;
+
     infile.open(input_filename, std::ios::binary);
     BitReader reader = BitReader(infile);
+    int padding_size = get_padding_size(reader);
 #ifdef SHOW_BYTES
     ostringstream bytes_ss;
     uint8_t byte = 0;
-    while(reader.readByte(byte)) {
+    while (reader.readByte(byte)) {
         bitset<8> bits(byte);
         bytes_ss << bits << endl;
     }
@@ -229,6 +309,7 @@ int main(int argc, char* argv[])
     reader.seek_back_to_beginning();
 #endif
     hfTreeNode* root = deserialize_huffman_tree(reader);
-
-    return 0;
+    bool return_val = decode_and_write(root, reader, padding_size, output_filename);
+    
+    return return_val;
 }
