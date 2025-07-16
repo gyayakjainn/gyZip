@@ -88,7 +88,7 @@ class hfTreeNode {
 public:
     union {
         char ch;
-        bool count;
+        bool isLeftChildPresent;
     } u;
     hfTreeNode* left;
     hfTreeNode* right;
@@ -98,7 +98,7 @@ public:
             { u.ch = c; }
     hfTreeNode(bool x)
         : left(nullptr), right(nullptr) 
-            { u.count = x; }
+            { u.isLeftChildPresent = x; }
 
     bool isLeafNode(){
         return left == nullptr && right == nullptr;
@@ -158,9 +158,9 @@ hfTreeNode* build_huffman_tree(BitReader& reader, uint16_t tree_size)
             if (bit) {
                 char ch = reader.readChar();
                 hfTreeNode* newNode = new hfTreeNode(ch);
-                if(st.top()->u.count == false) {
+                if(st.top()->u.isLeftChildPresent == false) {
                     st.top()->left = newNode;
-                    st.top()->u.count = true;
+                    st.top()->u.isLeftChildPresent = true;
                 }
                 else {
                     st.top()->right = newNode;
@@ -168,9 +168,9 @@ hfTreeNode* build_huffman_tree(BitReader& reader, uint16_t tree_size)
                 }
             } else {
                 hfTreeNode* newNode = new hfTreeNode(false);
-                if(st.top()->u.count == false) {
+                if(st.top()->u.isLeftChildPresent == false) {
                     st.top()->left = newNode;
-                    st.top()->u.count = true;
+                    st.top()->u.isLeftChildPresent = true;
                 }
                 else{
                     st.top()->right = newNode;
