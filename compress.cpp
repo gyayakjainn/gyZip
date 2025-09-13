@@ -4,8 +4,12 @@
 #include <unordered_map>
 #include <fstream>
 #include <bitset>
+#include <chrono>
 
 using namespace std;
+
+#define BUFFER_SIZE 32*1024 // 32KB
+uint8_t BUFFER[BUFFER_SIZE];
 
 #ifdef SHOW_TREE
     ostringstream tree_ss;
@@ -16,6 +20,7 @@ class BitWriter {
     uint8_t buffer = 0;
     int bit_count = 0;
     size_t total_bits = 0;
+    int main_buf_pos = 0;
 #ifdef ENABLE_LOGS
     ostringstream logs_ss;
 #endif
@@ -65,7 +70,8 @@ public:
         bit_count++;
         total_bits++;
         if (bit_count == 8) {
-            out.put(buffer);
+            isMainBufferFull();
+            BUFFER[main_buf_pos++] = buffer;
 #ifdef ENABLE_LOGS
             bitset<8> bits(buffer);
             logs_ss << bits << ": " << buffer << endl; // debug logs
@@ -89,7 +95,9 @@ public:
         static_assert(std::is_integral<T>::value, "Only integral types supported");
 
         for (size_t i = 0; i < sizeof(T); ++i) {
-            out.put((value >> (i * 8)) & 0xFF);  // Little-endian write
+            isMainBufferFull();
+            BUFFER[main_buf_pos++] = (value >> (i * 8)) & 0xFF;  // Little-endian write
+            
 #ifdef ENABLE_LOGS
             bitset <8> bits((value >> (i * 8)) & 0xFF);
             logs_ss << bits << ": " << ((value >> (i * 8)) & 0xFF) << endl;
@@ -110,13 +118,22 @@ public:
         out.seekp(current_position);
     }
 
+    void isMainBufferFull() {
+        if (main_buf_pos == BUFFER_SIZE) {
+            out.write(reinterpret_cast<const char*>(BUFFER),BUFFER_SIZE);
+            main_buf_pos = 0;
+        }
+        return;
+    }
 
     void flush() 
     {
         if (bit_count > 0) {
             buffer <<= (8 - bit_count); // pad with 0s
             patch_uint_at_position(std::ios::beg + 2, uint8_t(8 - bit_count));      
-            out.put(buffer);
+            isMainBufferFull();
+            BUFFER[main_buf_pos] = buffer;
+            out.write(reinterpret_cast<const char*>(BUFFER),main_buf_pos);
 #ifdef ENABLE_LOGS
             bitset<8> bits(buffer);
             logs_ss << bits << ": " << buffer << endl;
@@ -260,6 +277,8 @@ int main(int argc, char* argv[])
         cerr << "Usage: " << argv[0] << " <input_file.txt>" << endl;
         return 1;
     }
+    auto start = std::chrono::high_resolution_clock::now();
+
     string input_filename = argv[argc-1];
     
     // Step 1: Frequency count
@@ -299,5 +318,8 @@ int main(int argc, char* argv[])
     }
 
     delete root;
+    auto end = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> elapsed = end - start;
+    std::cout << "Buffer Size: " << 1.0*BUFFER_SIZE/1024 << "KB\nCompression time: " << elapsed.count() << " seconds\n";
     return 0;
 }
